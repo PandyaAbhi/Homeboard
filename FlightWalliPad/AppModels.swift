@@ -61,6 +61,9 @@ struct Aircraft: Identifiable, Decodable, Equatable {
         let directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
         return directions[Int(((track + 22.5) / 45).rounded(.down)) % directions.count]
     }
+    var proximityText: String {
+        "Passing \(distanceText) \(headingText) of Boston Logan"
+    }
     var isInteresting: Bool {
         let code = (type ?? "").uppercased()
         return code.hasPrefix("A35") || code.hasPrefix("A38") || code.hasPrefix("B74") || code.hasPrefix("B77") || code.hasPrefix("B78") || code.hasPrefix("C17")

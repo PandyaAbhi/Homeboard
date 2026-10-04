@@ -5,7 +5,7 @@ import UIKit
 
 struct ContentView: View {
     private enum DisplayMode: String, CaseIterable {
-        case home = "HOME", sky = "SKY & SPACE", pulse = "AIRPORT PULSE", homeControl = "HOME CONTROL"
+        case home = "HOME", sky = "WEATHER & SKY", pulse = "NEARBY FLIGHTS", homeControl = "HOME CONTROL"
         var icon: String {
             switch self {
             case .home: return "house.fill"
@@ -22,7 +22,10 @@ struct ContentView: View {
     @State private var homeStore: HomeKitStore?
     @State private var showMoment = false
     @State private var systemChromeVisible = false
+    @State private var lastInteraction = Date()
+    @State private var ambientAudio = AmbientAudioController()
     @AppStorage("autoCycle") private var autoCycle = true
+    @AppStorage("ambientMuted") private var ambientMuted = true
     @AppStorage("worldCityIDs") private var worldCityIDs = "Europe/London,Asia/Tokyo"
     @AppStorage("welcomeMessage") private var welcomeMessage = "WELCOME HOME"
     @AppStorage("temperatureUnit") private var temperatureUnit = "F"
@@ -32,14 +35,15 @@ struct ContentView: View {
         ZStack {
             Color(red: 0.008, green: 0.016, blue: 0.035).ignoresSafeArea()
             WeatherBackground(condition: vm.weatherCondition, date: now).ignoresSafeArea()
-            Color.black.opacity(0.07).ignoresSafeArea()
+            // Keep the interface readable without hiding the animated weather scene.
+            Color.black.opacity(0.025).ignoresSafeArea()
             StarField().opacity(WeatherBackground.starOpacity(condition: vm.weatherCondition, date: now)).ignoresSafeArea()
             VStack(spacing: 0) {
                 header
                 modeBar
                 ZStack {
                     if displayMode == .home {
-                        HomeView(now: now, clocks: selectedClocks, headlines: vm.headlines, greeting: welcomeMessage)
+                        HomeView(now: now, clocks: selectedClocks, headlines: vm.headlines, greeting: welcomeMessage, weather: vm.weatherCondition, forecast: vm.hourlyForecast, aircraft: vm.aircraft, lightsOn: homeStore?.lights.filter(\.isOn).count ?? 0, distanceMode: isDistanceMode)
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                     if displayMode == .sky {
@@ -51,7 +55,10 @@ struct ContentView: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                     if displayMode == .homeControl {
-                        HomeControlView(store: homeStore) { homeStore = HomeKitStore() }
+                        HomeControlView(store: homeStore, connect: { homeStore = HomeKitStore() }, movieModeSelected: {
+                            ambientMuted = true
+                            ambientAudio.setMuted(true)
+                        })
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                 }
@@ -63,6 +70,8 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
+            ambientAudio.setMuted(ambientMuted)
+            ambientAudio.update(condition: vm.weatherCondition)
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -81,6 +90,9 @@ struct ContentView: View {
                 displayMode = DisplayMode.allCases[(index + 1) % DisplayMode.allCases.count]
             }
         }
+        .onChange(of: vm.weatherCondition) { _, condition in ambientAudio.update(condition: condition) }
+        .onChange(of: ambientMuted) { _, muted in ambientAudio.setMuted(muted) }
+        .simultaneousGesture(TapGesture().onEnded { lastInteraction = Date() })
         .task {
             vm.start()
             if homeStore == nil { homeStore = HomeKitStore() }
@@ -93,6 +105,10 @@ struct ContentView: View {
     private var selectedClocks: [WorldClock] {
         let selected = Set(worldCityIDs.split(separator: ",").map(String.init))
         return WorldCities.all.filter { selected.contains($0.timeZone) }
+    }
+
+    private var isDistanceMode: Bool {
+        displayMode == .home && now.timeIntervalSince(lastInteraction) > 90
     }
 
     private var skyWeatherSummary: String {
@@ -161,6 +177,17 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
+            Button {
+                ambientMuted.toggle()
+                lastInteraction = Date()
+            } label: {
+                Image(systemName: ambientMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: 38, height: 36)
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(ambientMuted ? "Unmute ambient sound" : "Mute ambient sound")
         }
         .padding(.horizontal, 24).padding(.vertical, 9)
     }
@@ -181,21 +208,34 @@ private struct HomeView: View {
     let clocks: [WorldClock]
     let headlines: [String]
     let greeting: String
+    let weather: String
+    let forecast: [HourlyWeather]
+    let aircraft: [Aircraft]
+    let lightsOn: Int
+    let distanceMode: Bool
     var body: some View {
-        VStack(spacing: 16) {
+        ViewThatFits(in: .vertical) {
+            fullLayout
+            compactLayout
+        }
+        .animation(.easeInOut(duration: 0.8), value: distanceMode)
+    }
+
+    private var fullLayout: some View {
+        VStack(spacing: distanceMode ? 10 : 16) {
             Spacer()
             Text(greeting.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "WELCOME HOME" : greeting.uppercased())
-                .font(.system(size: 21, weight: .medium, design: .serif))
+                .font(.system(size: distanceMode ? 16 : 21, weight: .medium, design: .serif))
                 .tracking(3.2)
                 .foregroundStyle(.white.opacity(0.92))
                 .shadow(color: .black.opacity(0.32), radius: 5, y: 2)
                 .accessibilityLabel("Dashboard greeting")
-            FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute().second()), fontSize: 98)
+            FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute().second()), fontSize: distanceMode ? 112 : 98)
                 .minimumScaleFactor(0.5)
             Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                 .font(.system(size: 25, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.75))
 
-            if !clocks.isEmpty {
+            if !distanceMode, !clocks.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(clocks) { clock in
@@ -205,10 +245,71 @@ private struct HomeView: View {
                     .padding(.horizontal, 24)
                 }
             }
-            NewsHeadlineCard(now: now, headlines: headlines)
+            NowInsightCard(now: now, weather: weather, forecast: forecast, aircraft: aircraft, lightsOn: lightsOn)
                 .padding(.horizontal, 24)
+            if !distanceMode {
+                NewsHeadlineCard(now: now, headlines: headlines).padding(.horizontal, 24)
+            }
             Spacer()
         }
+    }
+
+    private var compactLayout: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                Text(greeting.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "WELCOME HOME" : greeting.uppercased())
+                    .font(.system(size: 15, weight: .medium, design: .serif)).tracking(2)
+                FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), fontSize: 50)
+                    .minimumScaleFactor(0.45)
+                Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                NowInsightCard(now: now, weather: weather, forecast: forecast, aircraft: aircraft, lightsOn: lightsOn)
+                NewsHeadlineCard(now: now, headlines: headlines)
+            }
+            .padding(16)
+        }
+    }
+}
+
+private struct NowInsightCard: View {
+    let now: Date
+    let weather: String
+    let forecast: [HourlyWeather]
+    let aircraft: [Aircraft]
+    let lightsOn: Int
+
+    private var insight: (icon: String, eyebrow: String, title: String, detail: String, color: Color) {
+        if let rain = forecast.first(where: { $0.time > now && ($0.summary.lowercased().contains("rain") || $0.summary.lowercased().contains("storm")) }) {
+            return ("cloud.rain.fill", "WEATHER AHEAD", "Rain around \(rain.time.formatted(date: .omitted, time: .shortened))", "Take an umbrella if you're heading out.", .cyan)
+        }
+        let sun = BostonSunTimes(date: now)
+        if now < sun.sunset, sun.sunset.timeIntervalSince(now) < 2 * 3600 {
+            return ("sunset.fill", "COMING UP", "Sunset in \(max(1, Int(sun.sunset.timeIntervalSince(now) / 60))) minutes", "The background will ease into its night scene.", .orange)
+        }
+        if lightsOn > 0 && Calendar.current.component(.hour, from: now) >= 22 {
+            return ("lightbulb.fill", "HOME CHECK", "\(lightsOn) light\(lightsOn == 1 ? " is" : "s are") still on", "Open Home Control to turn them off.", .yellow)
+        }
+        if let flight = aircraft.filter({ $0.flight?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false && $0.distance != nil }).min(by: { ($0.distance ?? 999) < ($1.distance ?? 999) }) {
+            return ("airplane", "PASSING NEARBY", flight.callsign, flight.proximityText, .orange)
+        }
+        let hour = Calendar.current.component(.hour, from: now)
+        if hour < 11 { return ("sun.max.fill", "GOOD MORNING", "A calm start to the day", "Weather, home and headlines are ready.", .yellow) }
+        if hour >= 18 { return ("moon.stars.fill", "THIS EVENING", "Home is settling in", "Your night scene will update automatically.", .cyan) }
+        return ("sparkles", "RIGHT NOW", "Everything looks steady", weather.isEmpty ? "Homeboard is keeping watch." : weather, .cyan)
+    }
+
+    var body: some View {
+        let item = insight
+        HStack(spacing: 15) {
+            Image(systemName: item.icon).font(.system(size: 28, weight: .semibold)).foregroundStyle(item.color).frame(width: 38)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.eyebrow).font(.system(size: 10, weight: .black, design: .monospaced)).foregroundStyle(item.color)
+                Text(item.title).font(.system(size: 18, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.72)
+                Text(item.detail).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(16).background(.black.opacity(0.20), in: RoundedRectangle(cornerRadius: 18))
     }
 }
 
@@ -401,25 +502,12 @@ private struct SkySpaceView: View {
     private var moon: MoonInfo { MoonInfo(date: now) }
     var body: some View {
         VStack(spacing: 12) {
-            Text("SKY & SPACE").font(.system(size: 16, weight: .black, design: .monospaced)).foregroundStyle(.cyan)
-            Text("YOUR NIGHT-SKY COMPANION").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
-            ZStack {
-                Image("MoonTexture")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 130, height: 130)
-                    .mask(MoonPhaseMask(offset: moon.shadowOffset * 130 / 158))
-            }
-            .frame(width: 130, height: 130)
-            .clipShape(Circle())
-            .padding(.vertical, 2)
-            Text(moon.name.uppercased()).font(.system(size: 25, weight: .bold, design: .rounded))
-            Text("\(moon.illumination)% ILLUMINATED • LUNAR DAY \(moon.day)")
-                .font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
+            Text("WEATHER & SKY").font(.system(size: 16, weight: .black, design: .monospaced)).foregroundStyle(.cyan)
+            Text("RIGHT NOW AND WHAT'S NEXT").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+            WeatherHero(summary: weatherSummary, forecast: forecast, temperatureUnit: temperatureUnit, now: now)
             HStack(spacing: 10) {
-                WeatherSpaceTile(summary: weatherSummary)
-                SpaceTile(icon: "sun.max.fill", title: "SUNSET", value: DaylightSummary.sunsetText(for: now))
-                SkyEventTile(now: now, moonrise: moonrise)
+                SolarEventTile(now: now)
+                MoonSummaryTile(now: now, moonrise: moonrise, moon: moon)
                 SpaceTile(icon: "globe.americas.fill", title: "LOCATION", value: "BOSTON, MA")
             }
             .padding(.horizontal, 24)
@@ -432,24 +520,106 @@ private struct SkySpaceView: View {
     }
 }
 
-private struct SkyEventTile: View {
+private struct SolarEventTile: View {
     let now: Date
-    let moonrise: Date?
 
     private var sun: BostonSunTimes { BostonSunTimes(date: now) }
-    private var isBeforeSunrise: Bool { now < sun.sunrise }
 
     var body: some View {
-        let title = isBeforeSunrise ? "SUNRISE" : "MOONRISE"
-        let icon = isBeforeSunrise ? "sunrise.fill" : "moonrise.fill"
-        let value = isBeforeSunrise ? sun.sunrise.formatted(date: .omitted, time: .shortened) : (moonrise?.formatted(date: .omitted, time: .shortened) ?? "—")
-        return VStack(spacing: 9) {
-            Image(systemName: icon).font(.title2).foregroundStyle(isBeforeSunrise ? .yellow : .cyan)
-            Text(title).font(.system(size: 10, weight: .black, design: .monospaced)).foregroundStyle(.white.opacity(0.58))
-            Text(value).font(.system(size: 13, weight: .bold, design: .rounded)).multilineTextAlignment(.center).lineLimit(2)
+        let event = nextEvent
+        VStack(spacing: 9) {
+            Image(systemName: event.icon).font(.title2).foregroundStyle(.yellow)
+            Text(event.title).font(.system(size: 10, weight: .black, design: .monospaced)).foregroundStyle(.white.opacity(0.58))
+            Text(event.value).font(.system(size: 15, weight: .bold, design: .rounded)).multilineTextAlignment(.center).lineLimit(2)
         }
-        .frame(maxWidth: .infinity, minHeight: 98).padding(10)
+        .frame(maxWidth: .infinity, minHeight: 112).padding(10)
         .background(.indigo.opacity(0.18), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var nextEvent: (title: String, icon: String, value: String) {
+        if now < sun.sunrise {
+            return ("SUNRISE", "sunrise.fill", sun.sunrise.formatted(date: .omitted, time: .shortened))
+        }
+        if now < sun.sunset {
+            return ("SUNSET", "sunset.fill", sun.sunset.formatted(date: .omitted, time: .shortened))
+        }
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now) ?? now
+        let sunrise = BostonSunTimes(date: tomorrow).sunrise
+        return ("SUNRISE TOMORROW", "sunrise.fill", sunrise.formatted(date: .omitted, time: .shortened))
+    }
+}
+
+private struct MoonSummaryTile: View {
+    let now: Date
+    let moonrise: Date?
+    let moon: MoonInfo
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image("MoonTexture")
+                .resizable()
+                .scaledToFill()
+                .frame(width: 52, height: 52)
+                .mask(MoonPhaseMask(offset: moon.shadowOffset * 52 / 158))
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(moon.name.uppercased())
+                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                Text("\(moon.illumination)% illuminated")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                Text("Moonrise \(moonrise?.formatted(date: .omitted, time: .shortened) ?? "—")")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.66))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 112).padding(10)
+        .background(.indigo.opacity(0.18), in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private struct WeatherHero: View {
+    let summary: String
+    let forecast: [HourlyWeather]
+    let temperatureUnit: String
+    let now: Date
+
+    private var current: HourlyWeather? { forecast.first(where: { $0.time >= now }) ?? forecast.first }
+    private var summaryParts: [String] { summary.components(separatedBy: "  •  ") }
+    private var temperature: String { summaryParts.first?.replacingOccurrences(of: "BOS ", with: "") ?? "—" }
+    private var wind: String { summaryParts.dropFirst().first?.replacingOccurrences(of: "WIND ", with: "") ?? current?.wind ?? "—" }
+    private var today: [HourlyWeather] { forecast.filter { Calendar.current.isDate($0.time, inSameDayAs: now) } }
+    private var range: String {
+        let values = today.map(convertedTemperature)
+        guard let low = values.min(), let high = values.max() else { return "H —  L —" }
+        return "H \(high)°  L \(low)°"
+    }
+
+    var body: some View {
+        HStack(spacing: 24) {
+            Image(systemName: current?.symbol ?? "cloud.sun.fill")
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 62, weight: .medium))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(temperature)
+                    .font(.system(size: 70, weight: .light, design: .rounded))
+                    .monospacedDigit()
+                Text((current?.summary ?? "CURRENT CONDITIONS").uppercased())
+                    .font(.system(size: 15, weight: .black, design: .monospaced))
+                Text("\(range)  •  WIND \(wind)")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 150)
+        .padding(.horizontal, 22)
+        .padding(.horizontal, 24)
+    }
+
+    private func convertedTemperature(_ hour: HourlyWeather) -> Int {
+        let sourceF = hour.unit.uppercased().hasPrefix("F")
+        if (temperatureUnit == "F") == sourceF { return hour.temperature }
+        if temperatureUnit == "C" { return Int(((Double(hour.temperature) - 32) * 5 / 9).rounded()) }
+        return Int((Double(hour.temperature) * 9 / 5 + 32).rounded())
     }
 }
 
@@ -550,6 +720,7 @@ private struct SpaceTile: View {
 private struct HomeControlView: View {
     let store: HomeKitStore?
     let connect: () -> Void
+    let movieModeSelected: () -> Void
     @State private var selectedLight: HomeKitStore.Light?
     @State private var showWiFiQR = false
 
@@ -575,9 +746,19 @@ private struct HomeControlView: View {
                 HStack(spacing: 14) {
                     RitualButton(icon: "sun.max.fill", title: "GOOD MORNING", color: .yellow) { store.goodMorning() }
                     RitualButton(icon: "moon.fill", title: "GOOD NIGHT", color: .indigo) { store.setAllLights(on: false) }
-                    RitualButton(icon: "film.fill", title: "MOVIE TIME", color: .orange) { store.movieTime() }
+                    RitualButton(icon: "film.fill", title: "MOVIE TIME", color: .orange) {
+                        movieModeSelected()
+                        store.movieTime()
+                    }
                 }
                 .padding(.horizontal, 24)
+
+                if !store.lights.isEmpty {
+                    let onCount = store.lights.filter(\.isOn).count
+                    Text(onCount == 0 ? "ALL LIGHTS ARE OFF" : "\(onCount) OF \(store.lights.count) LIGHTS ON")
+                        .font(.system(size: 13, weight: .black, design: .monospaced))
+                        .foregroundStyle(onCount == 0 ? .green : .yellow)
+                }
 
                 if store.lights.isEmpty {
                     HomeEmptyState(text: "No controllable lights found. Add lights or scenes in Apple Home, then return here.")
@@ -795,56 +976,77 @@ private struct HomeEmptyState: View {
 
 private struct AirportPulseView: View {
     let aircraft: [Aircraft]; let isLoading: Bool; let errorMessage: String?
-    private var arrivals: Int { aircraft.filter { ($0.verticalRate ?? 0) < -300 }.count }
-    private var departures: Int { aircraft.filter { ($0.verticalRate ?? 0) > 300 }.count }
-    private var featured: Aircraft? { aircraft.first(where: \.isInteresting) ?? aircraft.first }
-    private var nearestArrival: Aircraft? { aircraft.filter { ($0.verticalRate ?? 0) < -300 }.min { ($0.distance ?? .greatestFiniteMagnitude) < ($1.distance ?? .greatestFiniteMagnitude) } }
-    private var fastest: Aircraft? { aircraft.max { ($0.groundSpeed ?? 0) < ($1.groundSpeed ?? 0) } }
-    private var highest: Aircraft? { aircraft.max { ($0.altitude?.doubleValue ?? 0) < ($1.altitude?.doubleValue ?? 0) } }
+    private var nearbyFlights: [Aircraft] {
+        Array(aircraft
+            .filter { plane in
+                let callsign = plane.flight?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return !callsign.isEmpty && plane.distance != nil && plane.altitude?.doubleValue != nil
+            }
+            .sorted { ($0.distance ?? .greatestFiniteMagnitude) < ($1.distance ?? .greatestFiniteMagnitude) }
+            .prefix(5))
+    }
+
     var body: some View {
-        VStack(spacing: 18) {
-            Text("AIRPORT PULSE").font(.system(size: 16, weight: .black, design: .monospaced)).foregroundStyle(.orange)
-            Text("WHAT'S HAPPENING AROUND BOSTON LOGAN").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
-            HStack(spacing: 14) {
-                PulseMetric(value: "\(aircraft.count)", label: "IN RANGE", color: .cyan)
-                PulseMetric(value: "\(arrivals)", label: "ARRIVING", color: .green)
-                PulseMetric(value: "\(departures)", label: "CLIMBING", color: .orange)
-            }.padding(.horizontal, 24)
-            if let featured {
+        VStack(spacing: 14) {
+            Text("NEARBY FLIGHTS").font(.system(size: 16, weight: .black, design: .monospaced)).foregroundStyle(.orange)
+            Text("THE CLOSEST IDENTIFIED AIRCRAFT AROUND BOSTON LOGAN")
+                .font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+            if !nearbyFlights.isEmpty {
                 VStack(spacing: 10) {
-                    Text("SPOTLIGHT FLIGHT").font(.system(size: 11, weight: .black, design: .monospaced)).foregroundStyle(.white.opacity(0.58))
-                    FlipBoardText(text: featured.callsign, fontSize: 36)
-                    if featured.operatorName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        Text(featured.airlineText).font(.system(size: 23, weight: .bold, design: .rounded))
-                        Text("AIRLINE / OPERATOR").font(.system(size: 9, weight: .black, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+                    ForEach(nearbyFlights) { flight in
+                        NearbyFlightCard(flight: flight)
                     }
-                    if let route = featured.routeText {
-                        Label(route, systemImage: "arrow.right")
-                            .font(.system(size: 16, weight: .black, design: .monospaced))
-                            .foregroundStyle(.cyan)
-                    }
-                    Text("\(featured.typeText) • \(featured.altitudeText) • \(featured.speedText) • HEADING \(featured.headingText)")
-                        .font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.72))
-                    Text("\(featured.movementText) • \(featured.distanceText) FROM BOSTON LOGAN")
-                        .font(.system(size: 13, weight: .black, design: .monospaced)).foregroundStyle(.orange)
-                }
-                .frame(maxWidth: .infinity).padding(22).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 20)).padding(.horizontal, 24)
-                HStack(spacing: 12) {
-                    if let nearestArrival { TrafficStory(icon: "arrow.down.right", title: "NEXT IN", plane: nearestArrival, detail: "\(nearestArrival.distanceText) • DESCENDING", color: .green) }
-                    if let fastest { TrafficStory(icon: "bolt.fill", title: "FASTEST", plane: fastest, detail: fastest.speedText, color: .yellow) }
-                    if let highest { TrafficStory(icon: "arrow.up", title: "HIGHEST", plane: highest, detail: highest.altitudeText, color: .cyan) }
                 }
                 .padding(.horizontal, 24)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "antenna.radiowaves.left.and.right").font(.system(size: 44)).foregroundStyle(.cyan)
-                    Text(isLoading ? "CHECKING THE AIRSPACE" : "WAITING FOR LIVE FLIGHTS").font(.system(size: 18, weight: .bold, design: .monospaced))
-                    Text(errorMessage ?? "The airport pulse will appear when free community ADS-B data is available.")
+                    Text(isLoading ? "CHECKING THE AIRSPACE" : "NO COMPLETE FLIGHTS NEARBY").font(.system(size: 18, weight: .bold, design: .monospaced))
+                    Text(errorMessage ?? "Only identified flights with useful live information are shown.")
                         .font(.system(size: 13, weight: .medium, design: .rounded)).multilineTextAlignment(.center).foregroundStyle(.white.opacity(0.65))
                 }.padding(24)
             }
             Spacer()
         }.padding(.top, 16)
+    }
+}
+
+private struct NearbyFlightCard: View {
+    let flight: Aircraft
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "airplane")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.orange)
+                .rotationEffect(.degrees(flight.track ?? 0))
+                .frame(width: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 9) {
+                    Text(flight.callsign).font(.system(size: 19, weight: .black, design: .monospaced))
+                    if let operatorName = flight.operatorName, !operatorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(operatorName.uppercased())
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72)).lineLimit(1)
+                    }
+                }
+                if let route = flight.routeText {
+                    Text(route).font(.system(size: 14, weight: .black, design: .monospaced)).foregroundStyle(.cyan)
+                }
+                Text(flight.proximityText)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(flight.distanceText).foregroundStyle(.orange)
+                Text(flight.altitudeText)
+                Text(flight.movementText)
+            }
+            .font(.system(size: 12, weight: .bold, design: .monospaced))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 13)
+        .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 17))
     }
 }
 
@@ -966,11 +1168,11 @@ private struct WeatherBackground: View {
                     NightAtmosphere(phase: phase, cloudCover: cloudCover, isStormy: isStormy)
                 }
                 if isCloudy || isStormy || isSnowy {
-                    CloudBank(phase: phase, opacity: isStormy ? 0.62 : (isSnowy ? 0.50 : 0.42), isDark: isStormy, band: 0)
-                    CloudBank(phase: phase + 19, opacity: isStormy ? 0.48 : 0.28, isDark: isStormy, band: 1)
+                    CloudBank(phase: phase, opacity: isStormy ? 0.48 : (isSnowy ? 0.34 : 0.24), isDark: isStormy, band: 0)
+                    CloudBank(phase: phase + 19, opacity: isStormy ? 0.34 : 0.16, isDark: isStormy, band: 1)
                 } else {
                     // Even a clear sky gets slow, high-altitude cloud movement.
-                    CloudBank(phase: phase, opacity: isDaytime ? 0.18 : 0.10, isDark: false, band: 0)
+                    CloudBank(phase: phase, opacity: isDaytime ? 0.10 : 0.06, isDark: false, band: 0)
                 }
                 if isStormy {
                     RainLayer(phase: phase).opacity(0.72)
@@ -1076,8 +1278,10 @@ private struct BackgroundMoon: View {
                 .scaledToFill()
                 .frame(width: size, height: size)
                 .mask(MoonPhaseMask(offset: moon.shadowOffset * size / 158))
-                .shadow(color: .white.opacity(obscured ? 0.10 : 0.45), radius: obscured ? 10 : 28)
-                .opacity(obscured ? 0.42 : 0.92)
+                // The moon belongs to the atmosphere rather than sitting above it.
+                .shadow(color: .white.opacity(obscured ? 0.06 : 0.22), radius: obscured ? 8 : 22)
+                .blur(radius: obscured ? 2.5 : 0.8)
+                .opacity(obscured ? 0.25 : 0.58)
                 .position(
                     x: proxy.size.width * 0.79 + CGFloat(sin(phase / 75) * 14),
                     y: proxy.size.height * 0.24 + CGFloat(cos(phase / 70) * 8)

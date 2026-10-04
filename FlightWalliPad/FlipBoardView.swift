@@ -33,9 +33,9 @@ private struct SplitFlapCharacter: View {
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: fontSize * 0.055)
-                    .fill(Color(red: 0.055, green: 0.06, blue: 0.065))
+                    .fill(Color(red: 0.075, green: 0.078, blue: 0.082).opacity(0.90))
                 RoundedRectangle(cornerRadius: fontSize * 0.055)
-                    .stroke(Color.white.opacity(0.13), lineWidth: 0.8)
+                    .stroke(Color.white.opacity(0.075), lineWidth: 0.65)
                 if isFlipping {
                     halfDigit(previousCharacter, half: .top)
                     halfDigit(displayedCharacter, half: .bottom)
@@ -48,22 +48,21 @@ private struct SplitFlapCharacter: View {
                 } else {
                     digit(displayedCharacter)
                 }
-                LinearGradient(colors: [.black.opacity(0.26), .clear], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [.black.opacity(0.14), .clear], startPoint: .top, endPoint: .bottom)
                     .frame(width: fontSize * 0.67, height: fontSize * 0.62)
                     .frame(height: fontSize * 1.24, alignment: .top)
-                LinearGradient(colors: [.clear, .black.opacity(0.36)], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [.clear, .black.opacity(0.20)], startPoint: .top, endPoint: .bottom)
                     .frame(width: fontSize * 0.67, height: fontSize * 0.62)
                     .frame(height: fontSize * 1.24, alignment: .bottom)
-                Rectangle().fill(.black.opacity(0.90)).frame(height: 1.5)
-                    .overlay(Rectangle().fill(.white.opacity(0.10)).frame(height: 0.5).offset(y: -1))
+                Rectangle().fill(.black.opacity(0.56)).frame(height: 1)
                 HStack {
-                    Circle().fill(.black).frame(width: fontSize * 0.10, height: fontSize * 0.10)
+                    Circle().fill(.black.opacity(0.62)).frame(width: fontSize * 0.07, height: fontSize * 0.07)
                     Spacer()
-                    Circle().fill(.black).frame(width: fontSize * 0.10, height: fontSize * 0.10)
+                    Circle().fill(.black.opacity(0.62)).frame(width: fontSize * 0.07, height: fontSize * 0.07)
                 }.padding(.horizontal, fontSize * 0.035)
             }
             .frame(width: fontSize * 0.67, height: fontSize * 1.24)
-            .shadow(color: .black.opacity(0.65), radius: 2, y: 2)
+            .shadow(color: .black.opacity(0.38), radius: 2, y: 1)
             .onAppear { previousCharacter = character; displayedCharacter = character }
             .onChange(of: character) { oldCharacter, newCharacter in
                 previousCharacter = oldCharacter
