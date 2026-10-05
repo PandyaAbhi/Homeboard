@@ -259,6 +259,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Homeboard;
 				INFOPLIST_KEY_NSHomeKitUsageDescription = "Homeboard uses Apple Home to show and control the accessories you choose.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Homeboard can optionally show and add events to calendars you choose. Apple Calendar handles account syncing.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -297,6 +298,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Homeboard;
 				INFOPLIST_KEY_NSHomeKitUsageDescription = "Homeboard uses Apple Home to show and control the accessories you choose.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Homeboard can optionally show and add events to calendars you choose. Apple Calendar handles account syncing.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
