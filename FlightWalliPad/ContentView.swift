@@ -2,13 +2,17 @@ import SwiftUI
 import Combine
 import CoreImage.CIFilterBuiltins
 import UIKit
+import EventKit
 
 struct ContentView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     private enum DisplayMode: String, CaseIterable {
-        case home = "HOME", sky = "WEATHER & SKY", pulse = "NEARBY FLIGHTS", homeControl = "HOME CONTROL"
+        case home = "HOME", planner = "PLANNER", sky = "WEATHER & SKY", pulse = "NEARBY FLIGHTS", homeControl = "HOME CONTROL"
         var icon: String {
             switch self {
             case .home: return "house.fill"
+            case .planner: return "calendar"
             case .sky: return "moon.stars.fill"
             case .pulse: return "airplane.departure"
             case .homeControl: return "lightbulb.fill"
@@ -43,11 +47,15 @@ struct ContentView: View {
                 modeBar
                 ZStack {
                     if displayMode == .home {
-                        HomeView(now: now, clocks: selectedClocks, headlines: vm.headlines, greeting: welcomeMessage, weather: vm.weatherCondition, forecast: vm.hourlyForecast, aircraft: vm.aircraft, lightsOn: homeStore?.lights.filter(\.isOn).count ?? 0, distanceMode: isDistanceMode)
+                        HomeView(now: now, clocks: selectedClocks, headlines: vm.headlines, greeting: welcomeMessage, weather: vm.weatherCondition, forecast: vm.hourlyForecast, aircraft: vm.aircraft, lightsOn: homeStore?.lights.filter(\.isOn).count ?? 0, distanceMode: isDistanceMode, usePhoneLayout: usePhoneLayout)
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                     if displayMode == .sky {
                         SkySpaceView(now: now, weatherSummary: skyWeatherSummary, forecast: vm.hourlyForecast, temperatureUnit: temperatureUnit, moonrise: vm.moonrise)
+                            .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    }
+                    if displayMode == .planner {
+                        LocalPlannerView()
                             .transition(.opacity.combined(with: .scale(scale: 0.985)))
                     }
                     if displayMode == .pulse {
@@ -111,6 +119,10 @@ struct ContentView: View {
         displayMode == .home && now.timeIntervalSince(lastInteraction) > 90
     }
 
+    private var usePhoneLayout: Bool {
+        horizontalSizeClass == .compact || verticalSizeClass == .compact
+    }
+
     private var skyWeatherSummary: String {
         guard let celsius = vm.weatherTemperatureC else { return vm.weatherSummary }
         let temperature: Int
@@ -128,17 +140,24 @@ struct ContentView: View {
     private var header: some View {
         HStack(alignment: .center) {
             if displayMode != .home {
-                FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), fontSize: 22)
-                VStack(alignment: .leading, spacing: 3) {
+                FlipBoardText(
+                    text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()),
+                    fontSize: usePhoneLayout ? 34 : 44
+                )
+                .accessibilityLabel(now.formatted(date: .omitted, time: .shortened))
+                VStack(alignment: .leading, spacing: 4) {
                     Text(welcomeMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "WELCOME HOME" : welcomeMessage.uppercased())
                     Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day().year()))
                 }
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.72))
+                .font(.system(size: usePhoneLayout ? 11 : 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             }
             Spacer()
         }
-        .padding(.horizontal, 24).padding(.vertical, displayMode == .home ? 10 : 16)
+        .padding(.horizontal, usePhoneLayout ? 16 : 24)
+        .padding(.vertical, displayMode == .home ? (usePhoneLayout ? 3 : 10) : (usePhoneLayout ? 8 : 16))
     }
 
     private func revealSystemChrome() {
@@ -149,7 +168,7 @@ struct ContentView: View {
     }
 
     private var modeBar: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: usePhoneLayout ? 10 : 18) {
             ForEach(DisplayMode.allCases, id: \.self) { mode in
                 Button {
                     withAnimation(.easeInOut(duration: 0.38)) { displayMode = mode }
@@ -167,11 +186,11 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(mode.rawValue)
             }
-            Spacer()
+            if !usePhoneLayout { Spacer() }
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 42, height: 36)
+                    .frame(width: usePhoneLayout ? 34 : 42, height: 36)
                     .foregroundStyle(.white.opacity(0.78))
                     .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
@@ -189,7 +208,9 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(ambientMuted ? "Unmute ambient sound" : "Mute ambient sound")
         }
-        .padding(.horizontal, 24).padding(.vertical, 9)
+        .frame(maxWidth: usePhoneLayout ? 520 : .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, usePhoneLayout ? 14 : 24).padding(.vertical, usePhoneLayout ? 5 : 9)
     }
 
     private var footer: some View {
@@ -199,9 +220,265 @@ struct ContentView: View {
             if let last = vm.lastUpdated { Text("FLIGHT UPDATE \(last.formatted(date: .omitted, time: .shortened))") }
         }
         .font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
-        .padding(14).background(.black.opacity(0.28))
+        .padding(.horizontal, usePhoneLayout ? 12 : 14)
+        .padding(.vertical, usePhoneLayout ? 7 : 14)
+        .background(.black.opacity(0.28))
     }
 }
+
+private struct LocalPlannerItem: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var title: String
+    var notes: String
+    var date: Date
+    var isDone = false
+}
+
+@MainActor
+private final class CalendarBridge: ObservableObject {
+    let store = EKEventStore()
+    @Published var calendars: [EKCalendar] = []
+    @Published var events: [EKEvent] = []
+    @Published var accessDenied = false
+
+    func connect(for day: Date) async {
+        do {
+            let granted = try await store.requestFullAccessToEvents()
+            accessDenied = !granted
+            guard granted else { return }
+            calendars = store.calendars(for: .event).filter(\.allowsContentModifications)
+            load(day: day)
+        } catch {
+            accessDenied = true
+        }
+    }
+
+    func load(day: Date) {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
+        let start = Calendar.current.startOfDay(for: day)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+        events = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: nil))
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    func add(title: String, notes: String, date: Date, calendarID: String) throws {
+        guard let calendar = calendars.first(where: { $0.calendarIdentifier == calendarID }) else { return }
+        let event = EKEvent(eventStore: store)
+        event.title = title
+        event.notes = notes.isEmpty ? nil : notes
+        event.startDate = date
+        event.endDate = date.addingTimeInterval(3600)
+        event.calendar = calendar
+        try store.save(event, span: .thisEvent, commit: true)
+        load(day: date)
+    }
+}
+
+private struct LocalPlannerView: View {
+    @AppStorage("localPlannerItems") private var storedItems = "[]"
+    @AppStorage("plannerCalendarID") private var calendarID = ""
+    @AppStorage("plannerCalendarEnabled") private var calendarEnabled = false
+    @StateObject private var calendar = CalendarBridge()
+    @State private var selectedDate = Calendar.current.startOfDay(for: Date())
+    @State private var showingAddItem = false
+
+    private var items: [LocalPlannerItem] {
+        (try? JSONDecoder().decode([LocalPlannerItem].self, from: Data(storedItems.utf8))) ?? []
+    }
+    private var selectedItems: [LocalPlannerItem] {
+        items.filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }.sorted { $0.date < $1.date }
+    }
+    private var selectedCalendar: EKCalendar? { calendar.calendars.first { $0.calendarIdentifier == calendarID } }
+    private var syncedEvents: [EKEvent] {
+        guard !calendarID.isEmpty else { return [] }
+        return calendar.events.filter { $0.calendar.calendarIdentifier == calendarID }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                VStack(spacing: 4) {
+                    Text("PLANNER").font(.system(size: 17, weight: .black, design: .monospaced)).foregroundStyle(.cyan)
+                    Text("LOCAL BY DEFAULT • CALENDAR SYNC OPTIONAL")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+                }
+                calendarConnection
+                DatePicker("Choose a day", selection: $selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical).tint(.cyan).padding(10)
+                    .background(.black.opacity(0.20), in: RoundedRectangle(cornerRadius: 20))
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                            .font(.system(size: 19, weight: .bold, design: .rounded))
+                        Text("\(selectedItems.count + syncedEvents.count) scheduled")
+                            .font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.58))
+                    }
+                    Spacer()
+                    Button { showingAddItem = true } label: {
+                        Image(systemName: "plus").font(.system(size: 18, weight: .bold)).frame(width: 42, height: 42)
+                            .background(.cyan.opacity(0.20), in: Circle())
+                    }.buttonStyle(.plain).accessibilityLabel("Add planner item")
+                }
+                if selectedItems.isEmpty && syncedEvents.isEmpty {
+                    ContentUnavailableView("Clear day", systemImage: "calendar.badge.checkmark", description: Text("Tap + to add a plan or reminder."))
+                        .foregroundStyle(.white.opacity(0.72)).frame(minHeight: 140)
+                } else {
+                    LazyVStack(spacing: 9) {
+                        ForEach(selectedItems) { plannerRow($0) }
+                        ForEach(syncedEvents, id: \.eventIdentifier) { calendarEventRow($0) }
+                    }
+                }
+            }
+            .frame(maxWidth: 680).padding(.horizontal, 18).padding(.vertical, 8).frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .task {
+            if calendarEnabled || !calendarID.isEmpty {
+                await calendar.connect(for: selectedDate)
+                restoreCalendarSelectionIfNeeded()
+            }
+        }
+        .onChange(of: selectedDate) { _, day in calendar.load(day: day) }
+        .sheet(isPresented: $showingAddItem) {
+            AddPlannerItemView(initialDate: selectedDate, calendars: calendar.calendars, preferredCalendarID: calendarID) { item, destinationID in
+                if let destinationID {
+                    calendarID = destinationID
+                    try? calendar.add(title: item.title, notes: item.notes, date: item.date, calendarID: destinationID)
+                } else {
+                    var updated = items; updated.append(item); save(updated)
+                }
+            }.presentationDetents([.medium, .large])
+        }
+    }
+
+    @ViewBuilder private var calendarConnection: some View {
+        HStack(spacing: 12) {
+            Image(systemName: selectedCalendar == nil ? "calendar.badge.plus" : "calendar.badge.checkmark")
+                .font(.title3).foregroundStyle(.cyan)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selectedCalendar?.title ?? "CONNECT A CALENDAR")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                Text(selectedCalendar == nil ? "Optional: Google, Outlook or iCloud" : "Events sync through Apple Calendar")
+                    .font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer()
+            if calendar.calendars.isEmpty {
+                Button("CONNECT") {
+                    Task {
+                        calendarEnabled = true
+                        await calendar.connect(for: selectedDate)
+                        restoreCalendarSelectionIfNeeded()
+                    }
+                }.buttonStyle(.bordered).tint(.cyan)
+            } else {
+                Menu {
+                    Button("Local only") { calendarEnabled = false; calendarID = ""; calendar.events = [] }
+                    ForEach(calendar.calendars, id: \.calendarIdentifier) { source in
+                        Button("\(source.title) • \(source.source.title)") {
+                            calendarEnabled = true
+                            calendarID = source.calendarIdentifier
+                            calendar.load(day: selectedDate)
+                        }
+                    }
+                } label: { Image(systemName: "chevron.up.chevron.down").padding(8) }
+            }
+        }
+        .padding(13).background(.black.opacity(0.20), in: RoundedRectangle(cornerRadius: 17))
+        if calendar.accessDenied {
+            Text("Calendar access is off. Enable it in Settings → Privacy & Security → Calendars → Homeboard.")
+                .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+        }
+    }
+
+    private func plannerRow(_ item: LocalPlannerItem) -> some View {
+        HStack(spacing: 12) {
+            Button { toggle(item) } label: {
+                Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle").font(.system(size: 23)).foregroundStyle(item.isDone ? .green : .white.opacity(0.55))
+            }.buttonStyle(.plain)
+            itemText(title: item.title, notes: item.notes, date: item.date, label: "ON DEVICE", done: item.isDone)
+            Spacer()
+            Button { save(items.filter { $0.id != item.id }) } label: { Image(systemName: "trash").foregroundStyle(.white.opacity(0.42)).padding(8) }.buttonStyle(.plain)
+        }.padding(13).background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 17))
+    }
+
+    private func calendarEventRow(_ event: EKEvent) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar").font(.system(size: 21)).foregroundStyle(.cyan)
+            itemText(title: event.title ?? "Calendar event", notes: event.notes ?? "", date: event.startDate, label: event.calendar.title.uppercased(), done: false)
+            Spacer()
+        }.padding(13).background(.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 17))
+    }
+
+    private func itemText(title: String, notes: String, date: Date, label: String, done: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 16, weight: .bold, design: .rounded)).strikethrough(done)
+            Text("\(date.formatted(date: .omitted, time: .shortened))  •  \(label)")
+                .font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+            if !notes.isEmpty { Text(notes).font(.system(size: 11, design: .rounded)).foregroundStyle(.white.opacity(0.58)).lineLimit(1) }
+        }
+    }
+
+    private func toggle(_ item: LocalPlannerItem) {
+        var updated = items
+        guard let index = updated.firstIndex(where: { $0.id == item.id }) else { return }
+        updated[index].isDone.toggle(); save(updated)
+    }
+    private func restoreCalendarSelectionIfNeeded() {
+        if calendarID.isEmpty || !calendar.calendars.contains(where: { $0.calendarIdentifier == calendarID }) {
+            calendarID = calendar.store.defaultCalendarForNewEvents?.calendarIdentifier
+                ?? calendar.calendars.first?.calendarIdentifier
+                ?? ""
+        }
+        if !calendarID.isEmpty { calendar.load(day: selectedDate) }
+    }
+    private func save(_ value: [LocalPlannerItem]) {
+        guard let data = try? JSONEncoder().encode(value), let string = String(data: data, encoding: .utf8) else { return }
+        storedItems = string
+    }
+}
+
+private struct AddPlannerItemView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var notes = ""
+    @State private var date: Date
+    @State private var destinationID: String
+    let calendars: [EKCalendar]
+    let onSave: (LocalPlannerItem, String?) -> Void
+
+    init(initialDate: Date, calendars: [EKCalendar], preferredCalendarID: String, onSave: @escaping (LocalPlannerItem, String?) -> Void) {
+        _date = State(initialValue: Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: initialDate) ?? initialDate)
+        _destinationID = State(initialValue: preferredCalendarID)
+        self.calendars = calendars; self.onSave = onSave
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("What are you planning?", text: $title)
+                DatePicker("Date and time", selection: $date)
+                TextField("Notes (optional)", text: $notes, axis: .vertical).lineLimit(2...5)
+                Picker("Save to", selection: $destinationID) {
+                    Text("Only on this device").tag("")
+                    ForEach(calendars, id: \.calendarIdentifier) { Text("\($0.title) • \($0.source.title)").tag($0.calendarIdentifier) }
+                }
+                Label(destinationID.isEmpty ? "Private local item" : "Will sync using Apple Calendar", systemImage: destinationID.isEmpty ? "lock.fill" : "arrow.triangle.2.circlepath")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("New Plan")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave(LocalPlannerItem(title: clean, notes: notes.trimmingCharacters(in: .whitespacesAndNewlines), date: date), destinationID.isEmpty ? nil : destinationID)
+                        dismiss()
+                    }.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
 
 private struct HomeView: View {
     let now: Date
@@ -213,10 +490,17 @@ private struct HomeView: View {
     let aircraft: [Aircraft]
     let lightsOn: Int
     let distanceMode: Bool
+    let usePhoneLayout: Bool
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            fullLayout
-            compactLayout
+        Group {
+            if usePhoneLayout {
+                phoneLayout
+            } else {
+                ViewThatFits(in: .vertical) {
+                    fullLayout
+                    phoneLayout
+                }
+            }
         }
         .animation(.easeInOut(duration: 0.8), value: distanceMode)
     }
@@ -254,20 +538,35 @@ private struct HomeView: View {
         }
     }
 
-    private var compactLayout: some View {
+    private var phoneLayout: some View {
         ScrollView {
-            VStack(spacing: 12) {
+            VStack(spacing: 11) {
                 Text(greeting.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "WELCOME HOME" : greeting.uppercased())
-                    .font(.system(size: 15, weight: .medium, design: .serif)).tracking(2)
-                FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), fontSize: 50)
-                    .minimumScaleFactor(0.45)
+                    .font(.system(size: 14, weight: .medium, design: .serif)).tracking(1.8)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                FlipBoardText(text: now.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute().second()), fontSize: 43)
+                    .minimumScaleFactor(0.38)
                 Text(now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                if !clocks.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(clocks) { clock in
+                                WorldClockTile(clock: clock, now: now).frame(width: 118)
+                            }
+                        }
+                    }
+                }
                 NowInsightCard(now: now, weather: weather, forecast: forecast, aircraft: aircraft, lightsOn: lightsOn)
                 NewsHeadlineCard(now: now, headlines: headlines)
             }
-            .padding(16)
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.hidden)
     }
 }
 
@@ -555,22 +854,20 @@ private struct MoonSummaryTile: View {
     let moon: MoonInfo
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 6) {
             Image("MoonTexture")
                 .resizable()
                 .scaledToFill()
-                .frame(width: 52, height: 52)
-                .mask(MoonPhaseMask(offset: moon.shadowOffset * 52 / 158))
+                .frame(width: 42, height: 42)
+                .mask(MoonPhaseMask(offset: moon.shadowOffset * 42 / 158))
                 .clipShape(Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                Text(moon.name.uppercased())
-                    .font(.system(size: 11, weight: .black, design: .monospaced))
-                Text("\(moon.illumination)% illuminated")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                Text("Moonrise \(moonrise?.formatted(date: .omitted, time: .shortened) ?? "—")")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.66))
-            }
+            Text(moon.name.uppercased())
+                .font(.system(size: 10, weight: .black, design: .monospaced))
+                .lineLimit(1).minimumScaleFactor(0.65)
+            Text("\(moon.illumination)% • \(moonrise?.formatted(date: .omitted, time: .shortened) ?? "—")")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.68))
+                .lineLimit(1).minimumScaleFactor(0.72)
         }
         .frame(maxWidth: .infinity, minHeight: 112).padding(10)
         .background(.indigo.opacity(0.18), in: RoundedRectangle(cornerRadius: 16))
