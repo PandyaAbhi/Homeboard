@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#214e8a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Homeboard">
+  <title>Homeboard</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="weather-scene" class="scene clear-day" aria-hidden="true">
+    <div class="sun"></div><div class="moon"></div>
+    <div class="cloud c1"></div><div class="cloud c2"></div><div class="cloud c3"></div>
+    <div class="precipitation"></div><div class="stars"></div>
+  </div>
+  <div class="veil"></div>
+
+  <main class="shell">
+    <header class="topbar">
+      <button class="brand" data-go="home" aria-label="Home"><span class="logo">H</span><span><strong id="greeting">Good evening</strong><small id="header-date"></small></span></button>
+      <nav id="nav" aria-label="Main navigation">
+        <button data-tab="home" class="active" title="Home">⌂</button>
+        <button data-tab="weather" title="Weather and sky">☼</button>
+        <button data-tab="planner" title="Planner">✓</button>
+        <button data-tab="guest" title="Guest Wi-Fi">⌁</button>
+      </nav>
+      <button id="settings-button" class="icon-button" aria-label="Settings">⚙</button>
+    </header>
+
+    <section id="home" class="view active">
+      <div class="hero">
+        <p class="eyebrow" id="welcome">WELCOME HOME</p>
+        <div id="flip-clock" class="flip-clock" aria-label="Current time"></div>
+        <p id="full-date" class="hero-date"></p>
+      </div>
+      <div id="world-clocks" class="world-clocks"></div>
+      <div class="dashboard-grid">
+        <button class="glass weather-now" data-go="weather">
+          <span><small id="location-name">YOUR LOCATION</small><strong id="temperature">--°</strong></span>
+          <span><b id="condition">Loading weather…</b><small id="hi-lo"></small></span>
+        </button>
+        <article class="glass focus-card">
+          <small>NEXT UP</small><strong id="next-plan">A clear day ahead</strong><span id="next-plan-time">Add something in Planner</span>
+        </article>
+      </div>
+      <article class="glass ticker"><span>NOW</span><p id="context-line">Homeboard is getting the room ready.</p></article>
+    </section>
+
+    <section id="weather" class="view">
+      <div class="section-heading"><div><p class="eyebrow">WEATHER & SKY</p><h1 id="weather-location">Your location</h1></div><div class="current-temp"><strong id="weather-temp">--°</strong><span id="weather-desc">Loading…</span></div></div>
+      <div class="weather-cards">
+        <article class="glass stat"><small>FEELS LIKE</small><strong id="feels-like">--°</strong></article>
+        <article class="glass stat"><small>WIND</small><strong id="wind">--</strong><span id="wind-meaning">Calm</span></article>
+        <article class="glass stat"><small id="solar-label">SUNSET</small><strong id="solar-time">--:--</strong></article>
+        <article class="glass stat"><small>MOON</small><strong id="moon-phase">--</strong><span id="moon-detail"></span></article>
+      </div>
+      <article class="glass forecast-card"><div class="card-title"><span>NEXT 24 HOURS</span><button id="unit-toggle">°F</button></div><div id="hourly" class="hourly"></div></article>
+      <article class="glass forecast-card"><div class="card-title"><span>7-DAY OUTLOOK</span></div><div id="daily" class="daily"></div></article>
+    </section>
+
+    <section id="planner" class="view">
+      <div class="section-heading"><div><p class="eyebrow">LOCAL PLANNER</p><h1>Your day, kept private</h1></div><button id="add-plan" class="primary">＋ Add</button></div>
+      <p class="privacy-note">Everything here stays in this browser on this device.</p>
+      <div id="planner-list" class="planner-list"></div>
+      <div id="empty-planner" class="empty glass"><span>✓</span><h2>Nothing planned yet</h2><p>Add reminders, errands, meals, or anything you want visible across the room.</p></div>
+    </section>
+
+    <section id="guest" class="view">
+      <div class="section-heading"><div><p class="eyebrow">GUEST ACCESS</p><h1>Wi-Fi made simple</h1></div></div>
+      <div class="guest-layout">
+        <article class="glass guest-card"><span class="wifi-glyph">⌁</span><h2 id="wifi-name-display">Home Wi-Fi</h2><p>Tap reveal to show the password for guests.</p><button id="reveal-wifi" class="primary">Reveal password</button><strong id="wifi-password-display" class="secret">••••••••</strong></article>
+        <article class="glass install-card"><span>▣</span><h2>Install Homeboard</h2><p>In Safari, tap Share → Add to Home Screen. It opens full-screen and updates automatically.</p><button id="install-button" class="secondary" hidden>Install app</button></article>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settings-dialog">
+    <form method="dialog" class="modal-card"><div class="modal-head"><h2>Homeboard settings</h2><button value="cancel" aria-label="Close">×</button></div>
+      <label>Welcome message<input id="setting-welcome" maxlength="40" placeholder="Welcome home"></label>
+      <label>Location<input id="setting-location" placeholder="Boston"><small>Searches automatically when saved.</small></label>
+      <label>Temperature<select id="setting-unit"><option value="fahrenheit">Fahrenheit</option><option value="celsius">Celsius</option></select></label>
+      <label>Wi-Fi name<input id="setting-wifi"></label><label>Wi-Fi password<input id="setting-password" type="password"></label>
+      <label class="switch-row"><span>Ambient weather sound<small>Generated locally; no audio files.</small></span><input id="setting-audio" type="checkbox"></label>
+      <button id="save-settings" value="default" class="primary">Save changes</button>
+    </form>
+  </dialog>
+
+  <dialog id="plan-dialog"><form method="dialog" class="modal-card"><div class="modal-head"><h2>Add to your day</h2><button value="cancel">×</button></div>
+    <label>Title<input id="plan-title" required maxlength="80"></label><div class="split"><label>Date<input id="plan-date" type="date" required></label><label>Time<input id="plan-time" type="time" required></label></div><label>Notes<textarea id="plan-notes" rows="3"></textarea></label><button id="save-plan" value="default" class="primary">Add item</button>
+  </form></dialog>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

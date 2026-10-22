@@ -1,0 +1,1 @@
+{"name":"Homeboard","short_name":"Homeboard","description":"A beautiful, local-first home dashboard for time, weather, planning and guests.","start_url":"./","display":"standalone","background_color":"#143d68","theme_color":"#214e8a","orientation":"any","icons":[{"src":"icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
